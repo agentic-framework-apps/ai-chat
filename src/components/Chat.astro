@@ -1,0 +1,184 @@
+---
+---
+
+<section class="chat" aria-label="AI chat">
+  <div id="log" class="log" aria-live="polite">
+    <p class="bubble assistant">Ask me anything.</p>
+  </div>
+  <form id="chat-form" novalidate>
+    <label class="sr-only" for="input">Your message</label>
+    <input
+      id="input"
+      type="text"
+      maxlength="4000"
+      placeholder="Message ShortChat…"
+      autocomplete="off"
+      autofocus
+    />
+    <button id="send" type="submit">Send</button>
+  </form>
+  <p id="status" class="status" role="status"></p>
+</section>
+
+<script>
+  const form = document.getElementById('chat-form') as HTMLFormElement;
+  const input = document.getElementById('input') as HTMLInputElement;
+  const log = document.getElementById('log') as HTMLElement;
+  const status = document.getElementById('status') as HTMLElement;
+  const sendBtn = document.getElementById('send') as HTMLButtonElement;
+
+  let sessionId: string | null = null;
+  let busy = false;
+
+  function appendBubble(role: 'user' | 'assistant', text: string) {
+    const p = document.createElement('p');
+    p.className = `bubble ${role}`;
+    p.textContent = text;
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+    return p;
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || busy) return;
+    busy = true;
+    input.value = '';
+    sendBtn.disabled = true;
+    appendBubble('user', text);
+    const reply = appendBubble('assistant', '');
+    status.textContent = 'Thinking…';
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: text, sessionId }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? 'Request failed.');
+      }
+      if (!res.body) throw new Error('No response stream.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const raw = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          let event = 'message';
+          let data = '';
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+          if (event === 'token') {
+            status.textContent = '';
+            const parsed = JSON.parse(data) as { text?: string };
+            reply.textContent += parsed.text ?? '';
+            log.scrollTop = log.scrollHeight;
+          } else if (event === 'done') {
+            const parsed = JSON.parse(data) as { sessionId?: string };
+            if (parsed.sessionId) sessionId = parsed.sessionId;
+          } else if (event === 'error') {
+            const parsed = JSON.parse(data) as { message?: string };
+            throw new Error(parsed.message ?? 'Inference failed.');
+          }
+        }
+      }
+    } catch (err) {
+      status.textContent = err instanceof Error ? err.message : 'Something went wrong.';
+    } finally {
+      busy = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+</script>
+
+<style>
+  .chat {
+    display: flex;
+    flex-direction: column;
+    height: min(70vh, 560px);
+  }
+  .log {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.75rem 0.25rem;
+  }
+  .bubble {
+    max-width: 80%;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.75rem;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.45;
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: #1e293b;
+    color: #e2e8f0;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: #0ea5e9;
+    color: #062033;
+  }
+  form {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+  input {
+    flex: 1;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid #1e293b;
+    border-radius: 0.5rem;
+    background: #0f172a;
+    color: #f1f5f9;
+    font-size: 1rem;
+  }
+  input:disabled {
+    opacity: 0.6;
+  }
+  button {
+    padding: 0.7rem 1.1rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: #0ea5e9;
+    color: #062033;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .status {
+    min-height: 1.2rem;
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
+    color: #94a3b8;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+</style>
