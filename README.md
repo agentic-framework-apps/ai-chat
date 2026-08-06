@@ -5,13 +5,14 @@ A minimal AI chat app built with [Astro](https://astro.build) and deployed on
 streamed token-by-token with **Server-Sent Events**, and each conversation is
 persisted in Cloudflare **Workers KV** so sessions remember context.
 
-Live at: <https://ai-chat.opencode-chat.workers.dev>
+Live at: <https://ai-chat.aichatcf.workers.dev>
 
 ## Features
 
 - Streaming responses via SSE (`event: token` chunks, then `event: done`)
 - Per-session conversation memory in Workers KV (last 10 turns)
 - Anonymous sessions — a `sessionId` UUID is generated on first message
+- Per-IP rate limiting (`cf-connecting-ip`): 30 messages/minute, 200 messages/day
 - No server to manage, no database to run
 
 ## How it works

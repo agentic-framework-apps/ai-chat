@@ -12,6 +12,38 @@ export const prerender = false;
 const MODEL = '@cf/meta/llama-3.2-3b-instruct';
 const SYSTEM_PROMPT = 'You are ShortChat, a concise and helpful assistant. Answer directly.';
 const MAX_INPUT = 4000;
+const MINUTE_LIMIT = 30;
+const DAY_LIMIT = 200;
+
+async function isRateLimited(kv: KVNamespace, ip: string): Promise<boolean> {
+  const key = `rl:${ip}`;
+  const raw = await kv.get(key);
+  const now = Date.now();
+  let minute = 0;
+  let day = 0;
+  let windowStart = now;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { m?: number; d?: number; ts?: number };
+      minute = typeof parsed.m === 'number' ? parsed.m : 0;
+      day = typeof parsed.d === 'number' ? parsed.d : 0;
+      windowStart = typeof parsed.ts === 'number' ? parsed.ts : now;
+    } catch {
+      // treat unreadable entry as a fresh window
+    }
+  }
+  if (now - windowStart >= 60000) {
+    minute = 0;
+    windowStart = now;
+  }
+  if (minute >= MINUTE_LIMIT || day >= DAY_LIMIT) return true;
+  await kv.put(
+    key,
+    JSON.stringify({ m: minute + 1, d: day + 1, ts: windowStart }),
+    { expirationTtl: 86400 },
+  );
+  return false;
+}
 
 function json(data: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -22,6 +54,11 @@ function json(data: Record<string, unknown>, status = 200): Response {
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const env = locals.runtime.env;
+
+  const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+  if (await isRateLimited(env.CHAT_KV, ip)) {
+    return json({ error: 'Too many requests. Please slow down.' }, 429);
+  }
 
   let message: unknown = '';
   let sessionId: string | undefined;
